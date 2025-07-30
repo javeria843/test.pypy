@@ -15,10 +15,11 @@ nltk.download("stopwords")
 
 try:
     nlp_spacy = spacy.load("en_core_web_sm")
-except:
-    import subprocess
-    subprocess.run(["python", "-m", "spacy", "download", "en_core_web_sm"])
+except OSError:
+    import spacy.cli
+    spacy.cli.download("en_core_web_sm")
     nlp_spacy = spacy.load("en_core_web_sm")
+
 
 model_embed = SentenceTransformer("all-MiniLM-L6-v2")
 
