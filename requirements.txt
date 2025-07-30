@@ -1,0 +1,7 @@
+streamlit
+pandas
+nltk
+spacy
+sentence-transformers
+PyMuPDF
+google-generativeai
