@@ -10,24 +10,27 @@ from sentence_transformers import SentenceTransformer, util
 import google.generativeai as genai
 
 # ========== Initial Setup ==========
+
 nltk.download("punkt")
 nltk.download("stopwords")
 
+# ✅ Load spaCy model with fallback install
 try:
     nlp_spacy = spacy.load("en_core_web_sm")
-except OSError:
-    import spacy.cli
-    spacy.cli.download("en_core_web_sm")
+except:
+    import subprocess
+    subprocess.run(["python", "-m", "spacy", "download", "en_core_web_sm", "--user"])
     nlp_spacy = spacy.load("en_core_web_sm")
 
-
+# ✅ SentenceTransformer model
 model_embed = SentenceTransformer("all-MiniLM-L6-v2")
 
-# ✅ Gemini API Key from Hugging Face Secrets
+# ✅ Configure Gemini API
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 gemini_model = genai.GenerativeModel("gemini-1.5-flash-8b")
 
 # ========== Helper Functions ==========
+
 def extract_text(file, filetype):
     try:
         if filetype == "pdf":
@@ -67,7 +70,8 @@ def save_history(resume, jd, score, skills, roles):
         pass
 
 # ========== Streamlit UI ==========
-st.set_page_config("AI Resume Matcher", layout="wide")
+
+st.set_page_config(page_title="AI Resume Matcher", layout="wide")
 st.title("💼 AI Resume Matcher & Job Advisor")
 
 col1, col2 = st.columns(2)
@@ -103,9 +107,11 @@ if st.button("🔍 Match & Advise") and res_file and jd_file:
 
     save_history(r_txt, j_txt, score, skills, roles)
 
-# ========== History ==========
+# ========== History Section ==========
+
 st.markdown("---")
 st.subheader("📊 Upload History")
+
 if os.path.exists("history.csv"):
     df = pd.read_csv("history.csv", header=None)
     df.columns = ["Resume Snippet", "JD Snippet", "Similarity", "Skills", "Roles"]
