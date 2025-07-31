@@ -1,7 +1,7 @@
-spacy==3.8.0
-sentence-transformers
-PyMuPDF
-pandas
 streamlit
+spacy==3.8.0
 nltk
+PyMuPDF
+sentence-transformers
+pandas
 google-generativeai
