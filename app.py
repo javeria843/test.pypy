@@ -1,19 +1,17 @@
 import os
-import csv
-import re
+import streamlit as st
 import fitz  # PyMuPDF
 import spacy
 import nltk
-import streamlit as st
-import pandas as pd
+from nltk.tokenize import sent_tokenize
 from sentence_transformers import SentenceTransformer, util
+import pandas as pd
 import google.generativeai as genai
 
-# ========== Initial Setup ==========
+# ✅ Download NLTK punkt tokenizer
+nltk.download('punkt')
 
-nltk.download("punkt")
-nltk.download("stopwords")
-
+# ✅ Load spaCy model safely
 try:
     nlp_spacy = spacy.load("en_core_web_sm")
 except OSError:
@@ -21,100 +19,96 @@ except OSError:
     spacy.cli.download("en_core_web_sm")
     nlp_spacy = spacy.load("en_core_web_sm")
 
+# ✅ Load SentenceTransformer model
+model = SentenceTransformer('all-MiniLM-L6-v2')
 
-# ✅ SentenceTransformer model
-model_embed = SentenceTransformer("all-MiniLM-L6-v2")
-
-# ✅ Configure Gemini API
+# ✅ Configure Gemini
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-gemini_model = genai.GenerativeModel("gemini-1.5-flash-8b")
+gemini = genai.GenerativeModel("gemini-1.5-flash")
 
-# ========== Helper Functions ==========
+# ✅ Utility functions
+def extract_text_from_pdf(uploaded_file):
+    text = ""
+    with fitz.open(stream=uploaded_file.read(), filetype="pdf") as doc:
+        for page in doc:
+            text += page.get_text()
+    return text
 
-def extract_text(file, filetype):
-    try:
-        if filetype == "pdf":
-            doc = fitz.open(stream=file.read(), filetype="pdf")
-            return " ".join([page.get_text() for page in doc])
-        else:
-            return file.read().decode("utf-8")
-    except Exception as e:
-        return f"❌ Error extracting text: {e}"
-
-def clean(text):
-    return re.sub(r"\s+", " ", text.strip())
-
-def preprocess(text):
+def preprocess_text(text):
     doc = nlp_spacy(text)
-    return " ".join([token.lemma_ for token in doc if token.is_alpha and not token.is_stop])
+    return " ".join([token.lemma_.lower() for token in doc if not token.is_stop and token.is_alpha])
 
-def embed(text):
-    return model_embed.encode(text, convert_to_tensor=True)
+def get_embeddings(texts):
+    return model.encode(texts, convert_to_tensor=True)
 
-def get_score(resume_emb, jd_emb):
-    return float(util.pytorch_cos_sim(resume_emb, jd_emb)[0][0])
+def calculate_similarity(resume_text, jd_text):
+    resume_sentences = sent_tokenize(resume_text)
+    jd_sentences = sent_tokenize(jd_text)
+    resume_embeddings = get_embeddings(resume_sentences)
+    jd_embeddings = get_embeddings(jd_sentences)
+    similarity_matrix = util.pytorch_cos_sim(resume_embeddings, jd_embeddings)
+    max_score = similarity_matrix.max().item()
+    return round(max_score * 100, 2)
 
-def ask_gemini(prompt):
+def gemini_response(prompt):
     try:
-        response = gemini_model.generate_content(prompt)
-        return response.text.strip() if hasattr(response, "text") else "🤖 No response received"
+        response = gemini.generate_content(prompt)
+        return response.text
     except Exception as e:
-        return f"❌ Gemini Error: {e}"
+        return "Error from Gemini: " + str(e)
 
-def save_history(resume, jd, score, skills, roles):
-    try:
-        row = [resume[:50], jd[:50], round(score, 2), skills, roles]
-        with open("history.csv", "a", newline="", encoding="utf-8") as file:
-            csv.writer(file).writerow(row)
-    except:
-        pass
+def display_history():
+    if os.path.exists("history.csv"):
+        try:
+            df = pd.read_csv("history.csv", header=None)
+            df.columns = ["Resume Snippet", "JD Snippet", "Similarity", "Skills", "Roles"]
+            st.dataframe(df)
+        except:
+            st.warning("History file found but couldn't read.")
 
-# ========== Streamlit UI ==========
-
+# ✅ Streamlit UI
 st.set_page_config(page_title="AI Resume Matcher", layout="wide")
-st.title("💼 AI Resume Matcher & Job Advisor")
+st.title("📄 AI Resume & JD Matcher with Suggestions")
 
-col1, col2 = st.columns(2)
-with col1:
-    res_file = st.file_uploader("📄 Upload Resume", type=["pdf", "txt"])
-with col2:
-    jd_file = st.file_uploader("📝 Upload Job Description", type=["pdf", "txt"])
+with st.sidebar:
+    st.subheader("Upload Files")
+    resume_file = st.file_uploader("Upload Resume (PDF)", type=["pdf"])
+    jd_file = st.file_uploader("Upload Job Description (PDF)", type=["pdf"])
+    if st.button("Show History"):
+        display_history()
 
-if st.button("🔍 Match & Advise") and res_file and jd_file:
-    r_txt = clean(extract_text(res_file, res_file.name.split(".")[-1]))
-    j_txt = clean(extract_text(jd_file, jd_file.name.split(".")[-1]))
+if resume_file and jd_file:
+    resume_text = extract_text_from_pdf(resume_file)
+    jd_text = extract_text_from_pdf(jd_file)
 
-    r_proc = preprocess(r_txt)
-    j_proc = preprocess(j_txt)
+    st.subheader("📌 Resume Preview")
+    st.text_area("Resume Text", resume_text[:1500], height=200)
 
-    r_emb = embed(r_proc)
-    j_emb = embed(j_proc)
-    score = get_score(r_emb, j_emb)
+    st.subheader("📌 Job Description Preview")
+    st.text_area("JD Text", jd_text[:1500], height=200)
 
-    st.success(f"Similarity Score: **{score:.2f}**")
+    if st.button("⚡ Match and Suggest"):
+        with st.spinner("Calculating similarity and generating suggestions..."):
+            clean_resume = preprocess_text(resume_text)
+            clean_jd = preprocess_text(jd_text)
+            similarity = calculate_similarity(clean_resume, clean_jd)
 
-    skill_prompt = f"Given this job:\n{j_txt}\nand resume:\n{r_txt}\nSuggest 5 missing skills."
-    role_prompt = f"Based on resume:\n{r_txt}\nSuggest 2-3 ideal job roles."
+            prompt_skills = f"Given this resume: {resume_text} and this job description: {jd_text}, suggest top 5 missing or weak skills in the resume that should be improved."
+            prompt_roles = f"Based on this resume: {resume_text}, suggest 3 ideal job roles or career paths that best match the candidate profile."
 
-    skills = ask_gemini(skill_prompt)
-    roles = ask_gemini(role_prompt)
+            skills = gemini_response(prompt_skills)
+            roles = gemini_response(prompt_roles)
 
-    st.subheader("🔧 Skills to Improve")
-    st.write(skills)
+        st.success(f"✅ Similarity Score: {similarity}%")
 
-    st.subheader("🏷️ Recommended Roles")
-    st.write(roles)
+        st.markdown("### 🔧 Skills to Improve")
+        st.write(skills)
 
-    save_history(r_txt, j_txt, score, skills, roles)
+        st.markdown("### 🧭 Recommended Roles")
+        st.write(roles)
 
-# ========== History Section ==========
+        # ✅ Save to history
+        data = [[resume_text[:300], jd_text[:300], similarity, skills, roles]]
+        df = pd.DataFrame(data)
+        df.to_csv("history.csv", mode='a', index=False, header=False)
 
-st.markdown("---")
-st.subheader("📊 Upload History")
-
-if os.path.exists("history.csv"):
-    df = pd.read_csv("history.csv", header=None)
-    df.columns = ["Resume Snippet", "JD Snippet", "Similarity", "Skills", "Roles"]
-    st.dataframe(df)
-else:
-    st.info("No history yet. Start analyzing to build one!")
